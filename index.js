@@ -468,14 +468,8 @@ async function startBot() {
   console.log("📡 初始化：載入歷史交易資料...");
   await monitorNewTransactions();
   
-  // 發送啟動通知給管理員
-  const startupMessage = `🚀 <b>實時監控 Bot 已啟動</b>\n\n` +
-    `📡 監控地址：${targetAddress.slice(0, 10)}...\n` +
-    `👥 當前用戶數：${authorizedUsers.size}\n` +
-    `📦 起始區塊：${startBlock}\n` +
-    `🕒 啟動時間：${formatDate(new Date())}\n\n` +
-    `🎫 邀請碼：<code>${INVITE_CODE}</code>\n` +
-    `📋 用戶可發送 /subscribe 訂閱即時通知`;
+  // 發送啟動通知給管理員（簡化版本）
+  const startupMessage = `✅ ${formatDate(new Date())}\nblock：${lastProcessedBlock}`;
     
   await sendTelegramMessage(startupMessage, ADMIN_CHAT_IDS);
 
