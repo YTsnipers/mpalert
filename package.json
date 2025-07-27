@@ -1,0 +1,31 @@
+{
+  "name": "telegram-eth-monitor",
+  "version": "1.0.0",
+  "description": "Ethereum address transaction monitor with Telegram notifications",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "ethereum",
+    "telegram",
+    "monitor",
+    "blockchain",
+    "bot"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.2",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  }
+}
