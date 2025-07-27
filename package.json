@@ -1,7 +1,7 @@
 {
   "name": "telegram-eth-monitor",
-  "version": "1.0.0",
-  "description": "Ethereum address transaction monitor with Telegram notifications",
+  "version": "2.0.0",
+  "description": "Multi-user Ethereum address transaction monitor with Telegram notifications",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -13,7 +13,8 @@
     "telegram",
     "monitor",
     "blockchain",
-    "bot"
+    "bot",
+    "multi-user"
   ],
   "author": "Your Name",
   "license": "MIT",
