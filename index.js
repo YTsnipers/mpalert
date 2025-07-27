@@ -33,7 +33,7 @@ const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
 
 // === 用戶管理 ===
 let authorizedUsers = new Set();
-let userJoinDates = new Map(); // 記錄用戶加入時間
+let userJoinDates = new Map();
 
 // 初始化管理員用戶
 ADMIN_CHAT_IDS.forEach(id => {
@@ -110,7 +110,6 @@ async function sendTelegramMessage(message, targetChatIds = null) {
     } catch (err) {
       console.error(`❌ 傳送給 ${chatId} 失敗：`, err.response?.data?.description || err.message);
       
-      // 如果用戶封鎖了 Bot，從授權列表中移除（除非是管理員）
       if (err.response?.data?.error_code === 403 && !isAdmin(chatId)) {
         authorizedUsers.delete(chatId);
         userJoinDates.delete(chatId);
@@ -139,7 +138,6 @@ async function handleUserManagement(chatId, messageText, userInfo) {
         [chatId]
       );
       
-      // 通知管理員
       if (ADMIN_CHAT_IDS.length > 0) {
         await sendTelegramMessage(
           `📢 新用戶訂閱\n👤 ${userName} (${chatId})\n🕒 ${formatDate(new Date())}\n👥 總用戶數：${authorizedUsers.size}`, 
@@ -162,7 +160,6 @@ async function handleUserManagement(chatId, messageText, userInfo) {
         userJoinDates.delete(chatId);
         await sendTelegramMessage(`👋 ${userName}，取消訂閱成功！如需重新訂閱，請發送 /subscribe`, [chatId]);
         
-        // 通知管理員
         if (ADMIN_CHAT_IDS.length > 0) {
           await sendTelegramMessage(
             `📤 用戶取消訂閱\n👤 ${userName} (${chatId})\n👥 剩餘用戶數：${authorizedUsers.size}`, 
@@ -192,7 +189,6 @@ async function handleUserManagement(chatId, messageText, userInfo) {
           [chatId]
         );
         
-        // 通知管理員
         if (ADMIN_CHAT_IDS.length > 0) {
           await sendTelegramMessage(
             `🎫 邀請碼用戶加入\n👤 ${userName} (${chatId})\n👥 總用戶數：${authorizedUsers.size}`, 
@@ -437,7 +433,7 @@ async function listenToCommands() {
           await sendTelegramMessage(usersMessage, [chatId]);
         }
         else if (text.startsWith('/broadcast ')) {
-          const broadcastMessage = message.text.substring(11); // 移除 '/broadcast '
+          const broadcastMessage = message.text.substring(11);
           if (broadcastMessage.trim()) {
             const finalMessage = `📢 <b>管理員廣播</b>\n\n${broadcastMessage}`;
             await sendTelegramMessage(finalMessage);
@@ -498,7 +494,6 @@ async function startBot() {
   console.log("📡 初始化：載入歷史交易資料...");
   await fetchTransactions({ silent: true });
   
-  // 發送啟動通知給管理員
   const startupMessage = `🚀 <b>Bot 已啟動</b>\n\n` +
     `📡 監控地址：${targetAddress.slice(0, 10)}...\n` +
     `👥 當前用戶數：${authorizedUsers.size}\n` +
@@ -511,22 +506,18 @@ async function startBot() {
 
   console.log("⏰ 設定定時任務...");
   
-  // 每 3 分鐘查詢一次（主要監控）
   setInterval(() => {
     fetchTransactions({ silent: true });
   }, 3 * 60 * 1000);
 
-  // 每小時發送狀態報告
   setInterval(() => {
     fetchTransactions({ silent: false, forceHourlyReport: true });
   }, 60 * 60 * 1000);
 
-  // 每 10 秒監聽指令
   setInterval(() => {
     listenToCommands();
   }, 10 * 1000);
 
-  // Render 免費方案：每 14 分鐘自我喚醒
   if (RENDER_URL) {
     setInterval(() => {
       selfPing();
