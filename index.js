@@ -44,8 +44,10 @@ ADMIN_CHAT_IDS.forEach(id => {
 // === 實時監控狀態變數 ===
 let lastProcessedBlock = startBlock; // 記錄最後處理的區塊
 let knownTxHashes = new Set(); // 記錄已知的交易雜湊
+let allTransactions2025 = new Set(); // 記錄2025年所有交易（用於統計）
 let lastUpdateId = null;
 let lastHourlyReport = new Date();
+let lastDailyReport = new Date();
 let isInitialized = false;
 
 // === Express 伺服器設定 ===
@@ -59,6 +61,7 @@ app.get('/', (req, res) => {
     adminUsers: ADMIN_CHAT_IDS.length,
     lastProcessedBlock,
     knownTransactions: knownTxHashes.size,
+    transactions2025: allTransactions2025.size,
     lastCheck: new Date().toISOString(),
     uptime: process.uptime(),
     platform: 'Render',
@@ -210,7 +213,28 @@ async function sendHourlyStatus() {
   const now = new Date();
   const timeStr = formatDate(now);
   
-  const message = `✅ ${timeStr}\nblock：${lastProcessedBlock}`;
+  const message = `${timeStr}\nblock：${lastProcessedBlock}\n✅ No Transaction in last hour`;
+    
+  await sendTelegramMessage(message);
+}
+
+// 發送每日統計報告
+async function sendDailyStats() {
+  const message = `==============\nTtl ${allTransactions2025.size} txs in 2025\n==============`;
+  await sendTelegramMessage(message);
+}
+
+// 檢查是否需要發送每日統計（UTC+8 00:00）
+function shouldSendDailyStats() {
+  const now = new Date();
+  const taipeiTime = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Taipei"}));
+  const lastDailyTaipei = new Date(lastDailyReport.toLocaleString("en-US", {timeZone: "Asia/Taipei"}));
+  
+  // 檢查是否跨日（UTC+8）
+  return taipeiTime.getDate() !== lastDailyTaipei.getDate() && 
+         taipeiTime.getHours() === 0 && 
+         taipeiTime.getMinutes() < 30; // 在00:00-00:30之間發送
+}block：${lastProcessedBlock}`;
     
   await sendTelegramMessage(message);
 }
@@ -248,6 +272,11 @@ async function monitorNewTransactions() {
       // 更新最大區塊號
       if (blockNumber > maxBlockNumber) {
         maxBlockNumber = blockNumber;
+      }
+      
+      // 記錄2025年的所有交易（用於統計）
+      if (txTime.getFullYear() === 2025) {
+        allTransactions2025.add(txHash);
       }
       
       // 檢查是否為新交易
@@ -291,7 +320,7 @@ async function monitorNewTransactions() {
 
     if (!isInitialized) {
       isInitialized = true;
-      console.log(`✅ 初始化完成，已載入 ${knownTxHashes.size} 筆歷史交易，開始監控新交易`);
+      console.log(`✅ 初始化完成，已載入 ${knownTxHashes.size} 筆歷史交易（2025年：${allTransactions2025.size} 筆），開始監控新交易`);
     }
 
   } catch (err) {
@@ -384,6 +413,7 @@ async function listenToCommands() {
           `🎯 監控地址：${targetAddress.slice(0, 10)}...\n` +
           `📦 最新處理區塊：${lastProcessedBlock}\n` +
           `📊 已知交易數：${knownTxHashes.size}\n` +
+          `📈 2025年交易數：${allTransactions2025.size}\n` +
           `👥 訂閱用戶：${authorizedUsers.size} 人\n` +
           `⏰ 運行時間：${hours}h ${minutes}m\n` +
           `📅 你的加入時間：${userJoinDate ? formatDate(userJoinDate) : '未知'}\n` +
@@ -469,7 +499,7 @@ async function startBot() {
   await monitorNewTransactions();
   
   // 發送啟動通知給管理員（簡化版本）
-  const startupMessage = `✅ ${formatDate(new Date())}\nblock：${lastProcessedBlock}`;
+  const startupMessage = `${formatDate(new Date())}\nblock：${lastProcessedBlock}`;
     
   await sendTelegramMessage(startupMessage, ADMIN_CHAT_IDS);
 
@@ -485,6 +515,14 @@ async function startBot() {
     sendHourlyStatus();
     lastHourlyReport = new Date();
   }, 60 * 60 * 1000);
+
+  // 每 30 分鐘檢查是否需要發送每日統計
+  setInterval(() => {
+    if (shouldSendDailyStats()) {
+      sendDailyStats();
+      lastDailyReport = new Date();
+    }
+  }, 30 * 60 * 1000);
 
   // 每 10 秒監聽指令
   setInterval(() => {
