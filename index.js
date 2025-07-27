@@ -42,9 +42,9 @@ ADMIN_CHAT_IDS.forEach(id => {
 });
 
 // === 實時監控狀態變數 ===
-let lastProcessedBlock = startBlock; // 記錄最後處理的區塊
-let knownTxHashes = new Set(); // 記錄已知的交易雜湊
-let allTransactions2025 = new Set(); // 記錄2025年所有交易（用於統計）
+let lastProcessedBlock = startBlock;
+let knownTxHashes = new Set();
+let allTransactions2025 = new Set();
 let lastUpdateId = null;
 let lastHourlyReport = new Date();
 let lastDailyReport = new Date();
@@ -128,7 +128,6 @@ async function sendTelegramMessage(message, targetChatIds = null) {
 async function handleUserManagement(chatId, messageText, userInfo) {
   const userName = userInfo?.first_name || userInfo?.username || `用戶${chatId}`;
   
-  // 訂閱功能
   if (messageText === '/subscribe') {
     if (!authorizedUsers.has(chatId)) {
       authorizedUsers.add(chatId);
@@ -153,7 +152,6 @@ async function handleUserManagement(chatId, messageText, userInfo) {
     return true;
   }
   
-  // 取消訂閱功能
   if (messageText === '/unsubscribe') {
     if (authorizedUsers.has(chatId)) {
       if (!isAdmin(chatId)) {
@@ -178,7 +176,6 @@ async function handleUserManagement(chatId, messageText, userInfo) {
     return true;
   }
   
-  // 邀請碼加入功能
   if (messageText.startsWith('/join ')) {
     const code = messageText.split(' ')[1];
     if (code === INVITE_CODE) {
@@ -230,13 +227,9 @@ function shouldSendDailyStats() {
   const taipeiTime = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Taipei"}));
   const lastDailyTaipei = new Date(lastDailyReport.toLocaleString("en-US", {timeZone: "Asia/Taipei"}));
   
-  // 檢查是否跨日（UTC+8）
   return taipeiTime.getDate() !== lastDailyTaipei.getDate() && 
          taipeiTime.getHours() === 0 && 
-         taipeiTime.getMinutes() < 30; // 在00:00-00:30之間發送
-}block：${lastProcessedBlock}`;
-    
-  await sendTelegramMessage(message);
+         taipeiTime.getMinutes() < 30;
 }
 
 // 實時監控新交易
@@ -269,21 +262,17 @@ async function monitorNewTransactions() {
       const blockNumber = parseInt(tx.blockNumber);
       const txTime = new Date(parseInt(tx.timeStamp) * 1000);
       
-      // 更新最大區塊號
       if (blockNumber > maxBlockNumber) {
         maxBlockNumber = blockNumber;
       }
       
-      // 記錄2025年的所有交易（用於統計）
       if (txTime.getFullYear() === 2025) {
         allTransactions2025.add(txHash);
       }
       
-      // 檢查是否為新交易
       if (!knownTxHashes.has(txHash)) {
         knownTxHashes.add(txHash);
         
-        // 只有在初始化完成後才推送通知
         if (isInitialized) {
           newTransactions.push({
             hash: txHash,
@@ -295,10 +284,8 @@ async function monitorNewTransactions() {
       }
     }
 
-    // 更新最後處理的區塊
     lastProcessedBlock = maxBlockNumber;
 
-    // 如果有新交易且已初始化，發送通知
     if (newTransactions.length > 0 && isInitialized) {
       console.log(`🚨 偵測到 ${newTransactions.length} 筆新交易，推送給 ${authorizedUsers.size} 位用戶`);
       
@@ -311,7 +298,6 @@ async function monitorNewTransactions() {
         
         await sendTelegramMessage(message);
         
-        // 避免訊息太頻繁，每筆交易間隔 1 秒
         if (newTransactions.length > 1) {
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
@@ -359,11 +345,9 @@ async function listenToCommands() {
       
       console.log(`📥 收到訊息：${text} 來自 ${chatId} (${userInfo?.first_name || userInfo?.username || '未知'})`);
 
-      // 處理用戶管理指令（對所有用戶開放）
       const handled = await handleUserManagement(chatId, text, userInfo);
       if (handled) continue;
 
-      // 幫助指令（對所有用戶開放）
       if (text === '/help') {
         const isAuthorized = authorizedUsers.has(chatId);
         const isUserAdmin = isAdmin(chatId);
@@ -392,7 +376,6 @@ async function listenToCommands() {
         continue;
       }
 
-      // 以下指令需要授權
       if (!authorizedUsers.has(chatId)) {
         await sendTelegramMessage(
           `❌ 你尚未授權使用此 Bot\n\n📢 加入方式：\n/subscribe - 直接訂閱\n/join 邀請碼 - 使用邀請碼\n/help - 查看幫助`, 
@@ -401,7 +384,6 @@ async function listenToCommands() {
         continue;
       }
 
-      // 授權用戶指令
       if (text === '/status') {
         const now = new Date();
         const uptime = Math.floor(process.uptime());
@@ -423,7 +405,6 @@ async function listenToCommands() {
         await sendTelegramMessage(statusMessage, [chatId]);
       }
 
-      // 管理員專用指令
       if (isAdmin(chatId)) {
         if (text === '/users') {
           const userList = Array.from(authorizedUsers).map((uid, index) => {
@@ -498,25 +479,20 @@ async function startBot() {
   console.log("📡 初始化：載入歷史交易資料...");
   await monitorNewTransactions();
   
-  // 發送啟動通知給管理員（簡化版本）
   const startupMessage = `${formatDate(new Date())}\nblock：${lastProcessedBlock}`;
-    
   await sendTelegramMessage(startupMessage, ADMIN_CHAT_IDS);
 
   console.log("⏰ 設定定時任務...");
   
-  // 每 30 秒檢查一次新交易（更頻繁的實時監控）
   setInterval(() => {
     monitorNewTransactions();
   }, 30 * 1000);
 
-  // 每小時發送狀態報告
   setInterval(() => {
     sendHourlyStatus();
     lastHourlyReport = new Date();
   }, 60 * 60 * 1000);
 
-  // 每 30 分鐘檢查是否需要發送每日統計
   setInterval(() => {
     if (shouldSendDailyStats()) {
       sendDailyStats();
@@ -524,12 +500,10 @@ async function startBot() {
     }
   }, 30 * 60 * 1000);
 
-  // 每 10 秒監聽指令
   setInterval(() => {
     listenToCommands();
   }, 10 * 1000);
 
-  // Render 免費方案：每 14 分鐘自我喚醒
   if (RENDER_URL) {
     setInterval(() => {
       selfPing();
