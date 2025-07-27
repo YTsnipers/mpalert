@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: ethereum-monitor-bot
+    env: node
+    region: singapore
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      # 以下環境變數需要在 Render Dashboard 中設定
+      - key: ETHERSCAN_API_KEY
+        sync: false
+      - key: TARGET_ADDRESS
+        sync: false
+      - key: START_BLOCK
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_IDS
+        sync: false
