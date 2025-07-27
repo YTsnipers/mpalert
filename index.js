@@ -41,8 +41,9 @@ ADMIN_CHAT_IDS.forEach(id => {
   userJoinDates.set(id, new Date());
 });
 
-// === 狀態變數 ===
-let historyTxs = [];
+// === 實時監控狀態變數 ===
+let lastProcessedBlock = startBlock; // 記錄最後處理的區塊
+let knownTxHashes = new Set(); // 記錄已知的交易雜湊
 let lastUpdateId = null;
 let lastHourlyReport = new Date();
 let isInitialized = false;
@@ -54,13 +55,14 @@ app.get('/', (req, res) => {
   res.json({
     status: 'running',
     targetAddress,
-    totalTransactions: historyTxs.length,
     totalUsers: authorizedUsers.size,
     adminUsers: ADMIN_CHAT_IDS.length,
+    lastProcessedBlock,
+    knownTransactions: knownTxHashes.size,
     lastCheck: new Date().toISOString(),
     uptime: process.uptime(),
     platform: 'Render',
-    version: '2.0.0'
+    version: '2.1.0'
   });
 });
 
@@ -81,10 +83,6 @@ function formatDate(date) {
     timeZone: "Asia/Taipei",
   });
   return formatter.format(date);
-}
-
-function isYear2025(date) {
-  return date.getFullYear() === 2025;
 }
 
 function isAdmin(chatId) {
@@ -134,7 +132,7 @@ async function handleUserManagement(chatId, messageText, userInfo) {
       userJoinDates.set(chatId, new Date());
       
       await sendTelegramMessage(
-        `🎉 歡迎 ${userName}！\n✅ 訂閱成功！你現在會收到 ${targetAddress.slice(0, 10)}... 的交易通知。\n\n📋 輸入 /help 查看可用指令`, 
+        `🎉 歡迎 ${userName}！\n✅ 訂閱成功！你現在會收到 ${targetAddress.slice(0, 10)}... 的即時交易通知。\n\n📋 輸入 /help 查看可用指令`, 
         [chatId]
       );
       
@@ -207,28 +205,22 @@ async function handleUserManagement(chatId, messageText, userInfo) {
   return false;
 }
 
-async function sendHourlyStatus(newTxs, now) {
+// 發送每小時狀態報告
+async function sendHourlyStatus() {
+  const now = new Date();
   const timeStr = formatDate(now);
-  let message;
-
-  if (newTxs.length > 0) {
-    message = `🚨 <b>每小時更新</b>：偵測到 ${newTxs.length} 筆新交易\n\n` + 
-      newTxs.map(tx =>
-        `🔹 ${formatDate(tx.time)}\n🔗 <a href="https://etherscan.io/tx/${tx.hash}">查看交易</a>\n📦 區塊: ${tx.block}`
-      ).join("\n\n");
-  } else {
-    message = `✅ <b>每小時更新</b>：截至 ${timeStr}，過去一小時內沒有新交易`;
-  }
-
-  message += `\n\n👥 目前訂閱用戶：${authorizedUsers.size} 人`;
+  
+  const message = `✅ ${timeStr}\nblock：${lastProcessedBlock}`;
+    
   await sendTelegramMessage(message);
 }
 
-async function fetchTransactions({ silent = false, forceHourlyReport = false } = {}) {
-  const url = `https://api.etherscan.io/api?module=account&action=txlist&address=${targetAddress}&startblock=${startBlock}&endblock=99999999&sort=asc&apikey=${ETHERSCAN_API_KEY}`;
+// 實時監控新交易
+async function monitorNewTransactions() {
+  const url = `https://api.etherscan.io/api?module=account&action=txlist&address=${targetAddress}&startblock=${lastProcessedBlock}&endblock=latest&sort=asc&apikey=${ETHERSCAN_API_KEY}`;
 
   try {
-    console.log(`🔍 開始查詢交易... (silent: ${silent})`);
+    console.log(`🔍 檢查新交易... 從區塊 ${lastProcessedBlock}`);
     
     const res = await axios.get(url, {
       timeout: 30000
@@ -245,62 +237,65 @@ async function fetchTransactions({ silent = false, forceHourlyReport = false } =
       return;
     }
 
-    const now = new Date();
-    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-    const newTxs = [];
+    const newTransactions = [];
+    let maxBlockNumber = lastProcessedBlock;
 
     for (const tx of data.result) {
+      const txHash = tx.hash;
+      const blockNumber = parseInt(tx.blockNumber);
       const txTime = new Date(parseInt(tx.timeStamp) * 1000);
       
-      if (!isYear2025(txTime)) continue;
-
-      const txHash = tx.hash;
-      const alreadySeen = historyTxs.some(t => t.hash === txHash);
-
-      if (!alreadySeen) {
-        const txObj = {
-          hash: txHash,
-          time: txTime,
-          block: parseInt(tx.blockNumber),
-          value: tx.value,
-          from: tx.from,
-          to: tx.to
-        };
-        historyTxs.push(txObj);
-
-        if (txTime > oneHourAgo) {
-          newTxs.push(txObj);
+      // 更新最大區塊號
+      if (blockNumber > maxBlockNumber) {
+        maxBlockNumber = blockNumber;
+      }
+      
+      // 檢查是否為新交易
+      if (!knownTxHashes.has(txHash)) {
+        knownTxHashes.add(txHash);
+        
+        // 只有在初始化完成後才推送通知
+        if (isInitialized) {
+          newTransactions.push({
+            hash: txHash,
+            time: txTime,
+            block: blockNumber,
+            value: parseFloat(tx.value) / 1e18
+          });
         }
       }
     }
 
-    historyTxs.sort((a, b) => b.time - a.time);
+    // 更新最後處理的區塊
+    lastProcessedBlock = maxBlockNumber;
 
-    console.log(`📊 總共 ${historyTxs.length} 筆 2025 年交易，新增 ${newTxs.length} 筆`);
-
-    if (newTxs.length > 0 && isInitialized) {
-      console.log(`🚨 偵測到 ${newTxs.length} 筆新交易，推送給 ${authorizedUsers.size} 位用戶`);
-      const message = `🚨🚨🚨 <b>${newTxs.length} 筆新交易偵測到</b>\n\n` + 
-        newTxs.map(tx =>
-          `🔹 時間: ${formatDate(tx.time)}\n🔗 <a href="https://etherscan.io/tx/${tx.hash}">查看交易</a>\n📦 區塊: ${tx.block}\n💰 數值: ${parseFloat(tx.value) / 1e18} ETH`
-        ).join("\n\n");
+    // 如果有新交易且已初始化，發送通知
+    if (newTransactions.length > 0 && isInitialized) {
+      console.log(`🚨 偵測到 ${newTransactions.length} 筆新交易，推送給 ${authorizedUsers.size} 位用戶`);
       
-      await sendTelegramMessage(message);
-    }
-
-    const hoursSinceLastReport = (now - lastHourlyReport) / (1000 * 60 * 60);
-    if ((hoursSinceLastReport >= 1 && !silent) || forceHourlyReport) {
-      await sendHourlyStatus(newTxs, now);
-      lastHourlyReport = now;
+      for (const tx of newTransactions) {
+        const message = `🚨🚨🚨 <b>1 Tx detected</b>\n\n` +
+          `🔹 ${formatDate(tx.time)}\n` +
+          `🔗 <a href="https://etherscan.io/tx/${tx.hash}">https://etherscan.io/tx/${tx.hash}</a>\n` +
+          `📦 block: ${tx.block}\n` +
+          `💰 value: ${tx.value} ETH`;
+        
+        await sendTelegramMessage(message);
+        
+        // 避免訊息太頻繁，每筆交易間隔 1 秒
+        if (newTransactions.length > 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
     }
 
     if (!isInitialized) {
       isInitialized = true;
-      console.log("✅ 初始化完成，開始監控新交易");
+      console.log(`✅ 初始化完成，已載入 ${knownTxHashes.size} 筆歷史交易，開始監控新交易`);
     }
 
   } catch (err) {
-    console.error("❌ 查詢交易發生錯誤：", err.message);
+    console.error("❌ 監控交易發生錯誤：", err.message);
     
     if (err.code === 'ECONNABORTED' || err.code === 'ENOTFOUND') {
       await sendTelegramMessage(`⚠️ 網路連線錯誤：${err.message}`, ADMIN_CHAT_IDS);
@@ -348,11 +343,10 @@ async function listenToCommands() {
         
         if (!isAuthorized) {
           helpMessage += `📢 <b>加入群組：</b>\n`;
-          helpMessage += `/subscribe - 訂閱交易通知\n`;
+          helpMessage += `/subscribe - 訂閱即時交易通知\n`;
           helpMessage += `/join 邀請碼 - 使用邀請碼加入\n\n`;
         } else {
           helpMessage += `👤 <b>用戶指令：</b>\n`;
-          helpMessage += `/check - 查看交易統計\n`;
           helpMessage += `/status - 查看 Bot 狀態\n`;
           helpMessage += `/unsubscribe - 取消訂閱\n\n`;
         }
@@ -379,29 +373,7 @@ async function listenToCommands() {
       }
 
       // 授權用戶指令
-      if (text === '/check') {
-        const now = new Date();
-        const timeFrames = [
-          { label: '過去 1 小時', since: new Date(now.getTime() - 1 * 60 * 60 * 1000) },
-          { label: '過去 24 小時', since: new Date(now.getTime() - 24 * 60 * 60 * 1000) },
-          { label: '過去 7 天', since: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000) },
-        ];
-
-        let messageToSend = `📊 <b>交易統計</b> (${targetAddress.slice(0, 10)}...)\n\n`;
-
-        for (const frame of timeFrames) {
-          const txs = historyTxs.filter(tx => tx.time > frame.since);
-          if (txs.length === 0) {
-            messageToSend += `${frame.label}：✅ 無交易\n`;
-          } else {
-            messageToSend += `${frame.label}：🔹 ${txs.length} 筆交易\n`;
-          }
-        }
-
-        messageToSend += `\n🕒 查詢時間：${formatDate(now)}`;
-        await sendTelegramMessage(messageToSend, [chatId]);
-      } 
-      else if (text === '/status') {
+      if (text === '/status') {
         const now = new Date();
         const uptime = Math.floor(process.uptime());
         const hours = Math.floor(uptime / 3600);
@@ -410,7 +382,8 @@ async function listenToCommands() {
         
         const statusMessage = `📱 <b>Bot 狀態</b>\n\n` +
           `🎯 監控地址：${targetAddress.slice(0, 10)}...\n` +
-          `📊 總交易數：${historyTxs.length}\n` +
+          `📦 最新處理區塊：${lastProcessedBlock}\n` +
+          `📊 已知交易數：${knownTxHashes.size}\n` +
           `👥 訂閱用戶：${authorizedUsers.size} 人\n` +
           `⏰ 運行時間：${hours}h ${minutes}m\n` +
           `📅 你的加入時間：${userJoinDate ? formatDate(userJoinDate) : '未知'}\n` +
@@ -481,43 +454,50 @@ process.on('uncaughtException', (err) => {
 
 // === 啟動程序 ===
 async function startBot() {
-  console.log("🚀 啟動多用戶 Telegram 監控 Bot...");
+  console.log("🚀 啟動實時以太坊交易監控 Bot...");
   console.log(`📡 監控地址：${targetAddress}`);
   console.log(`👑 管理員數量：${ADMIN_CHAT_IDS.length}`);
   console.log(`🎫 邀請碼已設定`);
   console.log(`👥 初始用戶數：${authorizedUsers.size}`);
+  console.log(`📦 起始區塊：${startBlock}`);
   
   app.listen(PORT, () => {
     console.log(`🌐 健康檢查伺服器運行在 port ${PORT}`);
   });
 
   console.log("📡 初始化：載入歷史交易資料...");
-  await fetchTransactions({ silent: true });
+  await monitorNewTransactions();
   
-  const startupMessage = `🚀 <b>Bot 已啟動</b>\n\n` +
+  // 發送啟動通知給管理員
+  const startupMessage = `🚀 <b>實時監控 Bot 已啟動</b>\n\n` +
     `📡 監控地址：${targetAddress.slice(0, 10)}...\n` +
     `👥 當前用戶數：${authorizedUsers.size}\n` +
-    `📊 歷史交易數：${historyTxs.length}\n` +
+    `📦 起始區塊：${startBlock}\n` +
     `🕒 啟動時間：${formatDate(new Date())}\n\n` +
     `🎫 邀請碼：<code>${INVITE_CODE}</code>\n` +
-    `📋 用戶可發送 /subscribe 直接訂閱`;
+    `📋 用戶可發送 /subscribe 訂閱即時通知`;
     
   await sendTelegramMessage(startupMessage, ADMIN_CHAT_IDS);
 
   console.log("⏰ 設定定時任務...");
   
+  // 每 30 秒檢查一次新交易（更頻繁的實時監控）
   setInterval(() => {
-    fetchTransactions({ silent: true });
-  }, 3 * 60 * 1000);
+    monitorNewTransactions();
+  }, 30 * 1000);
 
+  // 每小時發送狀態報告
   setInterval(() => {
-    fetchTransactions({ silent: false, forceHourlyReport: true });
+    sendHourlyStatus();
+    lastHourlyReport = new Date();
   }, 60 * 60 * 1000);
 
+  // 每 10 秒監聽指令
   setInterval(() => {
     listenToCommands();
   }, 10 * 1000);
 
+  // Render 免費方案：每 14 分鐘自我喚醒
   if (RENDER_URL) {
     setInterval(() => {
       selfPing();
@@ -525,7 +505,7 @@ async function startBot() {
     console.log("🏓 已啟用自我喚醒機制 (每 14 分鐘)");
   }
 
-  console.log("✅ Bot 啟動完成！");
+  console.log("✅ 實時監控 Bot 啟動完成！");
 }
 
 startBot().catch(err => {
